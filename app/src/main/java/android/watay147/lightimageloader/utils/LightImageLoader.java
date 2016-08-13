@@ -64,7 +64,9 @@ public class LightImageLoader {
         ImageView imageView;
         Bitmap bitmap;
         String uri;
-        volatile boolean canceled;//readed can use
+        volatile boolean canceled;
+        //when for read, volatile is enoght
+        // instead of a lock
 
 
 
@@ -233,7 +235,7 @@ public class LightImageLoader {
             if (mDiskLruCache != null && getBitmapFromDiskCache(key) == null) {
                 String diskKey=hashKeyForDisk(key);
                 try {
-                    DiskLruCache.Editor editor = mDiskLruCache.edit(key);
+                    DiskLruCache.Editor editor = mDiskLruCache.edit(diskKey);
                     if (editor != null) {
                         OutputStream outputStream = editor.newOutputStream(0);
                         ByteArrayOutputStream output = new ByteArrayOutputStream();

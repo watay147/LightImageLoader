@@ -12,6 +12,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         ImageView imageView=(ImageView)findViewById(R.id.image);
-        LightImageLoader.getInstance().loadImage(imageView,"http://img.hexun.com/2011-06-21/130726386.jpg");
+        LightImageLoader.getInstance().loadImage(imageView,"http://www.2cto.com/uploadfile/Collfiles/20141020/2014102008450444.jpg");
     }
 }
