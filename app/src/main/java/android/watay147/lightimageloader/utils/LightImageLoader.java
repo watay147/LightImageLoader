@@ -5,31 +5,48 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.os.AsyncTask;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.util.Log;
 import android.util.LruCache;
 import android.widget.ImageView;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
+import libcore.io.DiskLruCache;
 
 /**
  * Created by wwz on 2016/8/13.
  */
 public class LightImageLoader {
+    private static String TAG="LightImageLoader";
+
     private static LightImageLoader mLightImageLoader;
     private Context mContext;
     private Handler mUiHandler;
     private ThreadPoolExecutor mThreadExecutor;
     private LinkedBlockingQueue<Runnable> mTaskQueue;
     private LruCache<String,Bitmap> mMemoryCache;
-
+    private DiskLruCache mDiskLruCache;
+    private final Object mDiskCacheLock = new Object();
+    private boolean mDiskCacheStarting = true;
+    private static final int DISK_CACHE_SIZE = 1024 * 1024 * 10; // 10MB
+    private static final String DISK_CACHE_SUBDIR = "thumbnails";
 
     private static int NUMBER_OF_CORES =
             Runtime.getRuntime().availableProcessors();
@@ -110,27 +127,41 @@ public class LightImageLoader {
             if(mImageLoadTask.isCancel()){
                 return;
             }
-            Bitmap bitmap = null;
-            try {
-                URL url = new URL(mImageLoadTask.uri);
-                HttpURLConnection connection = (HttpURLConnection)url
-                        .openConnection();
-                connection.setRequestMethod("GET");
-                InputStream inputStream = connection.getInputStream();
-                bitmap = BitmapFactory.decodeStream(inputStream);
-            } catch (Exception e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+
+            Bitmap bitmap = getBitmapFromDiskCache(mImageLoadTask.uri);
+
+            if(bitmap==null) {
+                try {
+                    URL url = new URL(mImageLoadTask.uri);
+                    HttpURLConnection connection = (HttpURLConnection) url
+                            .openConnection();
+                    connection.setRequestMethod("GET");
+                    InputStream inputStream = connection.getInputStream();
+                    bitmap = BitmapFactory.decodeStream(inputStream);
+                } catch (Exception e) {
+
+
+                }
             }
             if(bitmap!=null){
-                LightImageLoader lightImageLoader=LightImageLoader
-                        .getInstance();
-                lightImageLoader.addBitmapToMemoryCache(mImageLoadTask.uri,bitmap);
+                addBitmapToCache(mImageLoadTask.uri,bitmap);
                 mImageLoadTask.setBitmap(bitmap);
                 mLightImageLoader.deliverMessage(mImageLoadTask,
                         LightImageLoader.TASK_COMPLETE);
 
             }
+
+        }
+
+        public Bitmap getBitmapFromDiskCache(String key){
+            LightImageLoader lightImageLoader=LightImageLoader
+                    .getInstance();
+            return  lightImageLoader.getBitmapFromDiskCache(key);
+        }
+        public void addBitmapToCache(String key,Bitmap bitmap){
+            LightImageLoader lightImageLoader=LightImageLoader
+                    .getInstance();
+            lightImageLoader.addBitmapToCache(key,bitmap);
 
         }
     }
@@ -164,19 +195,120 @@ public class LightImageLoader {
                 return bitmap.getByteCount() / 1024;
             }
         };
+        File disCacheDir=new File(Environment.getExternalStorageDirectory(),DISK_CACHE_SUBDIR);
+        new AsyncTask<File,Void,Void>(){
+            @Override
+            protected Void doInBackground(File... params) {
+                synchronized (mDiskCacheLock) {
+                    File cacheDir = params[0];
+                    try {
+                        mDiskLruCache = DiskLruCache.open(cacheDir, 1, 1,
+                                DISK_CACHE_SIZE);
+                        mDiskCacheStarting = false; // Finished initialization
+                    }
+                    catch (IOException e){
+
+                    }
+                    finally {
+                        mDiskCacheLock.notifyAll(); // Wake any waiting threads
+                    }
+
+
+
+                }
+                return null;
+            }
+        }.execute(disCacheDir);
 
 
     }
 
-    public  void addBitmapToMemoryCache(String key, Bitmap bitmap) {
+    public void addBitmapToCache(String key, Bitmap bitmap) {
         //The LruCache is thread safe therefore no need for synchronizing.
         if (getBitmapFromMemCache(key) == null) {
             mMemoryCache.put(key, bitmap);
         }
+        // Also add to disk cache
+        synchronized (mDiskCacheLock) {
+            if (mDiskLruCache != null && getBitmapFromDiskCache(key) == null) {
+                String diskKey=hashKeyForDisk(key);
+                try {
+                    DiskLruCache.Editor editor = mDiskLruCache.edit(key);
+                    if (editor != null) {
+                        OutputStream outputStream = editor.newOutputStream(0);
+                        ByteArrayOutputStream output = new ByteArrayOutputStream();
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, output);
+                        byte[] data=output.toByteArray();
+                        outputStream.write(data);
+                        outputStream.flush();
+                        editor.commit();
+                    }
+                    mDiskLruCache.flush();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    static public String hashKeyForDisk(String key) {
+        String cacheKey;
+        try {
+            final MessageDigest mDigest = MessageDigest.getInstance("MD5");
+            mDigest.update(key.getBytes());
+            cacheKey = bytesToHexString(mDigest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            cacheKey = String.valueOf(key.hashCode());
+        }
+        return cacheKey;
+    }
+
+    static private String bytesToHexString(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bytes.length; i++) {
+            String hex = Integer.toHexString(0xFF & bytes[i]);
+            if (hex.length() == 1) {
+                sb.append('0');
+            }
+            sb.append(hex);
+        }
+        return sb.toString();
     }
 
     public Bitmap getBitmapFromMemCache(String key) {
-        return mMemoryCache.get(key);
+        Bitmap bitmap=mMemoryCache.get(key);
+        if(bitmap!=null)
+            Log.e(TAG,"mem hit");
+        return bitmap;
+    }
+
+
+    public Bitmap getBitmapFromDiskCache(String key){
+
+        synchronized (mDiskCacheLock) {
+            // Wait while disk cache is started from background thread
+            while (mDiskCacheStarting) {
+                try {
+                    mDiskCacheLock.wait();
+                } catch (InterruptedException e) {}
+            }
+            if (mDiskLruCache != null) {
+                try{
+                    String diskKey=hashKeyForDisk(key);
+                    DiskLruCache.Snapshot snapShot=mDiskLruCache.get(diskKey);
+                    if (snapShot != null) {
+                        InputStream is = snapShot.getInputStream(0);
+                        Bitmap bitmap = BitmapFactory.decodeStream(is);
+                        Log.e(TAG,"disk hit");
+                        return bitmap;
+                    }
+
+                }
+                catch (IOException e){
+                }
+            }
+        }
+        return null;
     }
 
     static public LightImageLoader getInstance(){
