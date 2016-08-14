@@ -128,7 +128,7 @@ public class LightImageLoader {
                 return;
             }
 
-            Bitmap bitmap = getBitmapFromDiskCache(mImageLoadTask.uri);
+            Bitmap bitmap = mLightImageLoader.getBitmapFromDiskCache(mImageLoadTask.uri);
 
             if(bitmap==null) {
                 try {
@@ -146,24 +146,12 @@ public class LightImageLoader {
 
             }
             if(bitmap!=null){
-                addBitmapToCache(mImageLoadTask.uri,bitmap);
+                mLightImageLoader.addBitmapToCache(mImageLoadTask.uri,bitmap);
                 mImageLoadTask.setBitmap(bitmap);
                 mLightImageLoader.deliverMessage(mImageLoadTask,
                         LightImageLoader.TASK_COMPLETE);
 
             }
-
-        }
-
-        public Bitmap getBitmapFromDiskCache(String key){
-            LightImageLoader lightImageLoader=LightImageLoader
-                    .getInstance();
-            return  lightImageLoader.getBitmapFromDiskCache(key);
-        }
-        public void addBitmapToCache(String key,Bitmap bitmap){
-            LightImageLoader lightImageLoader=LightImageLoader
-                    .getInstance();
-            lightImageLoader.addBitmapToCache(key,bitmap);
 
         }
     }
@@ -176,10 +164,12 @@ public class LightImageLoader {
                 ImageLoadTask task = (ImageLoadTask) inputMessage.obj;
                 switch (inputMessage.what){
                     case TASK_COMPLETE:
-                        if(!task.isCancel()){
-                            ImageView imageView=task.imageView.get();
-                            if(imageView!=null) {
-                                imageView.setImageBitmap(task.bitmap);
+                        synchronized (task) {
+                            if (!task.isCancel()) {
+                                ImageView imageView = task.imageView.get();
+                                if (imageView != null) {
+                                    imageView.setImageBitmap(task.bitmap);
+                                }
                             }
                         }
                         break;
@@ -239,7 +229,7 @@ public class LightImageLoader {
         return  mLightImageLoader;
     }
 
-    public void addBitmapToCache(String key, Bitmap bitmap) {
+    private void addBitmapToCache(String key, Bitmap bitmap) {
         //The LruCache is thread safe therefore no need for synchronizing.
         if (getBitmapFromMemCache(key) == null) {
             mMemoryCache.put(key, bitmap);
@@ -267,7 +257,7 @@ public class LightImageLoader {
         }
     }
 
-    static public String hashKeyForDisk(String key) {
+    static private String hashKeyForDisk(String key) {
         String cacheKey;
         try {
             final MessageDigest mDigest = MessageDigest.getInstance("MD5");
@@ -291,7 +281,7 @@ public class LightImageLoader {
         return sb.toString();
     }
 
-    public Bitmap getBitmapFromMemCache(String key) {
+    private Bitmap getBitmapFromMemCache(String key) {
         Bitmap bitmap=mMemoryCache.get(key);
         if(bitmap!=null)
             Log.e(TAG,"mem hit");
@@ -299,7 +289,7 @@ public class LightImageLoader {
     }
 
 
-    public Bitmap getBitmapFromDiskCache(String key){
+    private Bitmap getBitmapFromDiskCache(String key){
 
         synchronized (mDiskCacheLock) {
             // Wait while disk cache is started from background thread
@@ -363,7 +353,7 @@ public class LightImageLoader {
 
     }
 
-    public static boolean cancelPotentialTask(ImageView imageView,String uri){
+    private static boolean cancelPotentialTask(ImageView imageView,String uri){
         final ImageLoadTask imageLoadTask=getImageLoadTask(imageView);
         if(imageLoadTask!=null){
             final String oldUri=imageLoadTask.uri;
@@ -381,7 +371,7 @@ public class LightImageLoader {
         return true;
     }
 
-    public static ImageLoadTask getImageLoadTask(ImageView imageView){
+    private static ImageLoadTask getImageLoadTask(ImageView imageView){
         if(imageView!=null) {
             Drawable drawable = imageView.getDrawable();
             if (drawable instanceof AsyncDrawable) {
