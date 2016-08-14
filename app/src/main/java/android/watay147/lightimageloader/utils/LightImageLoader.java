@@ -1,6 +1,5 @@
 package android.watay147.lightimageloader.utils;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
@@ -37,7 +36,6 @@ public class LightImageLoader {
     private static String TAG="LightImageLoader";
 
     private static LightImageLoader mLightImageLoader;
-    private Context mContext;
     private Handler mUiHandler;
     private ThreadPoolExecutor mThreadExecutor;
     private LinkedBlockingQueue<Runnable> mTaskQueue;
@@ -61,7 +59,7 @@ public class LightImageLoader {
     final static int  TASK_COMPLETE=0;
 
     static class ImageLoadTask{
-        ImageView imageView;
+        WeakReference<ImageView> imageView;
         Bitmap bitmap;
         String uri;
         volatile boolean canceled;
@@ -71,7 +69,7 @@ public class LightImageLoader {
 
 
         public ImageLoadTask(ImageView imageView,String uri){
-            this.imageView=imageView;
+            this.imageView=new WeakReference<>(imageView);
             this.uri=uri;
             canceled=false;
 
@@ -140,10 +138,12 @@ public class LightImageLoader {
                     connection.setRequestMethod("GET");
                     InputStream inputStream = connection.getInputStream();
                     bitmap = BitmapFactory.decodeStream(inputStream);
+                    inputStream.close();
                 } catch (Exception e) {
 
 
                 }
+
             }
             if(bitmap!=null){
                 addBitmapToCache(mImageLoadTask.uri,bitmap);
@@ -177,7 +177,10 @@ public class LightImageLoader {
                 switch (inputMessage.what){
                     case TASK_COMPLETE:
                         if(!task.isCancel()){
-                            task.imageView.setImageBitmap(task.bitmap);
+                            ImageView imageView=task.imageView.get();
+                            if(imageView!=null) {
+                                imageView.setImageBitmap(task.bitmap);
+                            }
                         }
                         break;
                 }
@@ -223,6 +226,17 @@ public class LightImageLoader {
         }.execute(disCacheDir);
 
 
+    }
+
+    static public LightImageLoader getInstance(){
+        if(mLightImageLoader==null){
+            synchronized (LightImageLoader.class){
+                if(mLightImageLoader==null){
+                    mLightImageLoader=new LightImageLoader();
+                }
+            }
+        }
+        return  mLightImageLoader;
     }
 
     public void addBitmapToCache(String key, Bitmap bitmap) {
@@ -313,16 +327,7 @@ public class LightImageLoader {
         return null;
     }
 
-    static public LightImageLoader getInstance(){
-        if(mLightImageLoader==null){
-            synchronized (LightImageLoader.class){
-                if(mLightImageLoader==null){
-                    mLightImageLoader=new LightImageLoader();
-                }
-            }
-        }
-        return  mLightImageLoader;
-    }
+
 
 
     private void deliverMessage(ImageLoadTask imageLoadTask,int state){
